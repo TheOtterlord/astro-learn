@@ -1,0 +1,29 @@
+---
+export interface Props {
+  title?: string;
+  description?: string;
+  lang?: string;
+}
+
+const {
+  title = 'Learn Astro',
+  description = 'Astro is a fresh but familiar approach to building websites.',
+  lang = 'en',
+} = Astro.props;
+---
+
+<html {lang}>
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<meta name="viewport" content="width=device-width" />
+		<meta name="generator" content={Astro.generator} />
+    <meta name="description" content={description} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+		<title>{title}</title>
+	</head>
+	<body>
+    <slot/>
+	</body>
+</html>

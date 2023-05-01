@@ -1,0 +1,35 @@
+---
+import Base from '../../layout/Base.astro'
+import Header from "../../components/Header.astro"
+import Tutorial from "../../components/Tutorial.astro"
+import { type CollectionEntry, getCollection } from 'astro:content'
+
+export const prerender = true;
+
+interface Props {
+  entry: CollectionEntry<'tutorial'>;
+  nav: { slug: string; title: string }[];
+  next?: { slug: string; title: string };
+}
+
+export async function getStaticPaths() {
+  const collection = await getCollection('tutorial')
+  const nav = collection.map(entry => ({
+    slug: entry.slug.split('-').slice(1).join('-'),
+    title: entry.data.title
+  }))
+  return collection.map((entry, i) => ({
+    params: { slug: entry.slug.split('-').slice(1).join('-') },
+    props: { entry, nav, next: nav[i + 1] }
+  }))
+}
+
+const { entry, nav, next } = Astro.props;
+---
+
+<Base title={entry.data.title}>
+  <div class="h-screen overflow-y-hidden">
+    <Header/>
+    <Tutorial {entry} {nav} {next}/>
+  </div>
+</Base>

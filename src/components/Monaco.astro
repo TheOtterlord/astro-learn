@@ -1,0 +1,133 @@
+<div id="editor" class="w-full min-h-[24rem] h-full"></div>
+
+<script>
+	import { loadWASM } from 'onigasm'
+	import { Registry } from 'monaco-textmate'
+	import { wireTmGrammars } from 'monaco-editor-textmate'
+  import { grammars as textmateGrammars } from '@blitz/textmate'
+  import theme from '../vs-dark.json'
+  import githubTheme from '../github-light.json'
+  import { files, active } from '../store/editor'
+
+  async function init() {
+    const monaco = await import('monaco-editor')
+    // this is really finicky, it's gonna be a pain when we build for prod
+    // update: it was
+    // update: temporary fix by using a CDN
+		await loadWASM(`https://unpkg.com/onigasm/lib/onigasm.wasm`)
+
+		const registry = new Registry({
+			getGrammarDefinition: async (scope) => {
+        console.log(scope)
+        if (scope === 'text.html.astro') return {
+					format: 'json',
+					content: await (await fetch(`https://raw.githubusercontent.com/withastro/language-tools/main/packages/vscode/syntaxes/astro.tmLanguage.json`)).text(),
+				}
+        if (scope === 'source.json') return {
+					format: 'plist',
+					content: await (await fetch(`https://raw.githubusercontent.com/microsoft/vscode-textmate/main/test-cases/themes/syntaxes/JSON.tmLanguage`)).text(),
+				}
+        if (scope === 'source.ts' || scope === 'source.tsx') return {
+					format: 'json',
+					content: await (await fetch(`https://raw.githubusercontent.com/microsoft/vscode-textmate/main/test-cases/themes/syntaxes/TypeScript.tmLanguage.json`)).text(),
+				}
+        if (scope === 'source.js' || scope === 'source.jsx') return {
+          format: 'json',
+          content: await (await fetch(`https://raw.githubusercontent.com/microsoft/vscode-textmate/main/test-cases/themes/syntaxes/JavaScript.tmLanguage.json`)).text(),
+        }
+        if (scope === 'source.css') return {
+          format: 'plist',
+          content: await (await fetch(`https://raw.githubusercontent.com/microsoft/vscode-textmate/main/test-cases/themes/syntaxes/css.plist`)).text(),
+        }
+        if (scope === 'text.html.markdown') {
+          return {format: 'json', content: textmateGrammars.find((tm) => tm.scopeName === 'text.html.markdown.astro').grammar}
+        }
+        if (scope === 'text.html.basic') {
+          return {format: 'json', content: textmateGrammars.find((tm) => tm.scopeName === 'text.html.basic').grammar}
+        }
+			},
+		})
+
+		// map of monaco "language id's" to TextMate scopeNames
+		const grammars = new Map()
+		grammars.set('css', 'source.css')
+		grammars.set('html', 'text.html.basic')
+		grammars.set('typescript', 'source.ts')
+		grammars.set('astro', 'text.html.astro')
+
+    const converter = {
+      ts: 'typescript',
+      js: 'javascript',
+      md: 'markdown',
+    }
+
+    // @ts-ignore
+		monaco.editor.defineTheme('vs-code-theme-converted', theme)
+		monaco.editor.defineTheme('github-theme-converted', githubTheme as any)
+
+    monaco.languages.register({ id: 'astro' })
+
+    // @ts-ignore
+    window.MonacoEnvironment = {
+      getWorker: function (workerId, label) {
+        const getWorkerModule = (moduleUrl, label) => {
+          // @ts-ignore
+          return new Worker(self.MonacoEnvironment.getWorkerUrl(moduleUrl), {
+            name: label,
+            type: 'module'
+          });
+        };
+
+        switch (label) {
+          case 'json':
+            return getWorkerModule('/monaco-editor/esm/vs/language/json/json.worker?worker', label);
+          case 'css':
+          case 'scss':
+          case 'less':
+            return getWorkerModule('/monaco-editor/esm/vs/language/css/css.worker?worker', label);
+          case 'html':
+          case 'handlebars':
+          case 'razor':
+            return getWorkerModule('/monaco-editor/esm/vs/language/html/html.worker?worker', label);
+          case 'typescript':
+          case 'javascript':
+            return getWorkerModule('/monaco-editor/esm/vs/language/typescript/ts.worker?worker', label);
+          default:
+            return getWorkerModule('/monaco-editor/esm/vs/editor/editor.worker?worker', label);
+        }
+      }
+    };
+
+		var editor = monaco.editor.create(document.getElementById('editor'), {
+			value: ``,
+			language: 'astro', // this won't work out of the box, see below for more info,
+      minimap: { enabled: false },
+      automaticLayout: true,
+      scrollBeyondLastLine: false,
+			theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'vs-code-theme-converted' : 'github-theme-converted', // very important, see comment above
+		})
+
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
+      e.matches ? monaco.editor.setTheme('vs-code-theme-converted') : monaco.editor.setTheme('github-theme-converted')
+    })
+
+		await wireTmGrammars(monaco, registry, grammars, editor)
+
+    let activeKey: string
+
+    active.listen((fileKey) => {
+      activeKey = fileKey
+      const language = converter[fileKey.split('.').pop()] ?? fileKey.split('.').pop()
+      editor.setValue(files.get()[fileKey])
+      monaco.editor.setModelLanguage(editor.getModel(), language)
+    })
+
+    editor.getModel().onDidChangeContent(e => {
+      const value = editor.getValue()
+      files.setKey(activeKey, value)
+      if (value.trim().length === 0) files.notify(activeKey)
+    });
+	}
+
+  init()
+</script>

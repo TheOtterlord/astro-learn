@@ -1,0 +1,258 @@
+---
+import type { CollectionEntry } from "astro:content"
+import Monaco from "../components/Monaco.astro"
+import { Icon } from 'astro-iconify'
+import fs from 'fs'
+import { join } from 'path'
+
+export interface Props {
+  entry: CollectionEntry<'tutorial'>
+  nav: {
+    slug: string
+    title: string
+  }[]
+  next?: {
+    slug: string
+    title: string
+  }
+}
+
+const { entry, nav, next } = Astro.props
+const { Content } = await entry.render()
+
+interface Files {
+  [key: string]: {
+    directory?: Files
+    file?: {
+      contents: string
+    }
+  }
+}
+
+const rootDir = `./src/content/tutorial/_${entry.slug.split('-')[0]}/base`
+const files: Files = {}
+// html tree
+let fileTree = ''
+let depth = 0
+
+function walk(dir: string, files: Record<string, any>) {
+  const paths = fs.readdirSync(join(dir), { withFileTypes: true })
+  
+  for (const path of paths) {
+    const filePath = `${dir}/${path.name}`
+    if (path.isDirectory()) {
+      files[path.name] = {directory: {}}
+      fileTree += `<li class="cursor-default" style="padding-left:${depth*0.5}rem" data-directory>📁 ${path.name}<ul>`
+      depth += 1
+      walk(filePath, files[path.name].directory)
+      depth -= 1
+      fileTree += `</ul></li>`
+    } else {
+      fileTree += `<li class="cursor-pointer" style="padding-left:${depth*0.5}rem" data-file="${filePath.split(rootDir + '/')[1]}">📄 ${path.name}</li>`
+      files[path.name] = {file: {contents: fs.readFileSync(filePath, 'utf-8')}}
+    }
+  }
+}
+
+walk(rootDir, files)
+---
+
+<script define:vars={{ files }}>
+  window.files = files
+</script>
+
+<div class="parent flex h-full">
+  <div class="instructions relative w-1/3 max-w-[65ch] bg-gray-100 text-gray-700 dark:bg-zinc-900 dark:text-zinc-300 h-full">
+    <div class="border-b-2 border-gray-200 dark:border-zinc-700 flex px-2">
+      <button onclick="document.querySelector('#menu').classList.toggle('hidden')">
+        <Icon name="ic:round-menu" class="w-6 h-6 m-2 cursor-pointer"/>
+      </button>
+      <h1 class="flex-grow inline-block px-4 py-2 text-center">{entry.data.title}</h1>
+      {next && (
+        <a href={`/tutorial/${next.slug}`} class="flex items-center">
+          <Icon name="ic:round-arrow-forward" class="w-6 h-6 m-2 inline-block cursor-pointer"/>
+        </a>
+      )}
+    </div>
+    <div class="prose prose-zinc dark:prose-invert px-8 pt-12 pb-32 h-full overflow-y-auto">
+      <Content/>
+    </div>
+    <div id="menu" class="hidden absolute top-10 left-0 min-h-full w-full bg-gray-200 dark:bg-zinc-800 py-8 px-16">
+      <ol class="list-decimal">
+        {nav.map(({ slug, title }) => (
+          <li><a href={`/tutorial/${slug}`} class={`block mb-4 text-gray-700 dark:text-zinc-300 ${slug === entry.slug.split('-').splice(1).join('-') ? 'text-purple-600 font-bold dark:text-purple-300' : ''}`}>{title}</a></li>
+        ))}
+      </ol>
+    </div>
+  </div>
+  <div class="divider w-[2px] bg-gray-300 dark:bg-zinc-700 h-full cursor-col-resize select-none"></div>
+  <div class="interactive w-2/3 h-full flex flex-col">
+    <div class="flex flex-1 h-7/12 dark:bg-zinc-900">
+      <div class="w-1/5 bg-gray-200 dark:bg-zinc-800 dark:text-zinc-300 p-4">
+        <ul class="list-inside">
+          <Fragment set:html={fileTree}/>
+        </ul>
+      </div>
+      <div class="w-4/5">
+        <Monaco/>
+      </div>
+    </div>
+    <div class="flex-1 h-5/12 -mt-[1px] relative">
+      <div class="bg-gray-100 dark:bg-zinc-900 flex">
+        <button id="refresh" class="bg-gray-300 dark:bg-zinc-800 dark:text-zinc-400 cursor-pointer"><Icon class="w-11 h-11 p-2" name="ic:round-refresh"/></button>
+        <p id="url" class="flex-grow inline-block p-3"></p>
+        <!-- <a id="external" class="p-2 text-lg bg-gray-300 cursor-pointer">Open</a> -->
+      </div>
+      <iframe class="w-full h-full"></iframe>
+      <div class="loading absolute top-0 left-0 w-full h-full bg-zinc-900">
+        <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
+          <div class="flex items-center justify-center animate-spin dark:text-gray-300">
+            <Icon name="ri:loader-4-fill" class="w-16 h-16"/>
+          </div>
+          <p class="text-center text-gray-300 mt-4">Starting development server...</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  import { WebContainer } from '@webcontainer/api'
+  // import { files } from '../tutorial/example'
+  // @ts-ignore
+  const files = window.files
+  import { 
+active, files as editorFiles } from '../store/editor'
+
+  const iframe = document.querySelector('iframe')!
+
+  let webcontainerInstance: WebContainer
+
+  async function installDependencies() {
+    const installProcess = await webcontainerInstance.spawn('npm', ['install'])
+    installProcess.output.pipeTo(new WritableStream({
+      write(data) {
+        // do something maybe
+      }
+    }))
+    return installProcess.exit
+  }
+
+  window.addEventListener('load', async () => {
+    webcontainerInstance = await WebContainer.boot()
+    await webcontainerInstance.mount(files)
+
+    editorFiles.setKey('src/pages/index.astro', files.src.directory.pages.directory['index.astro'].file.contents)
+    active.set('src/pages/index.astro')
+    document.querySelector('[data-file="src/pages/index.astro"]')?.classList.add('text-purple-600', 'font-bold', 'dark:text-purple-300')
+
+    const exitCode = await installDependencies()
+    if (exitCode !== 0) throw new Error('Installation failed')
+
+    const serverProcess = await webcontainerInstance.spawn('npm', ['run', 'start'])
+
+    serverProcess.output.pipeTo(
+      new WritableStream({
+        write(data) {
+          // do something maybe
+        },
+      })
+    )
+
+    webcontainerInstance.on('server-ready', (port, url) => {
+      iframe.src = url
+      document.querySelector('#url')!.textContent = new URL(url).pathname
+      // document.querySelector('#external'))!.href = url
+      document.querySelector('#refresh')?.addEventListener('click', () => {
+        iframe.src = url
+      })
+      document.querySelector('.loading')!.classList.add('hidden')
+    })
+
+    editorFiles.listen((_, key) => {
+      webcontainerInstance.fs.writeFile(''+key, editorFiles.get()[key])
+    })
+
+    document.querySelectorAll('[data-file]').forEach((el: HTMLElement) => {
+      el.addEventListener('click', () => {
+        const file = el.getAttribute('data-file')!
+        document.querySelectorAll('[data-file]').forEach((el: HTMLElement) => {
+          el.classList.remove('text-purple-600', 'font-bold', 'dark:text-purple-300')
+        })
+        el.classList.add('text-purple-600', 'font-bold', 'dark:text-purple-300')
+        if (editorFiles.get()[file]) return active.set(file)
+        let path = file.split('/')
+        let contents = files
+        for (const part in path) {
+          contents = contents[path[part]]
+          if (contents.directory) contents = contents.directory
+          else contents = contents.file.contents
+        }
+        editorFiles.setKey(file, contents)
+        active.set(file)
+      })
+    })
+  })
+</script>
+
+<script>
+  // here be dragons
+
+  const container = document.querySelector('.parent') as HTMLDivElement
+  const divider = document.querySelector('.divider') as HTMLDivElement
+  const pane1 = document.querySelector('.instructions') as HTMLDivElement
+  const pane2 = document.querySelector('.interactive') as HTMLDivElement
+  let startX: number
+  let startWidth: number
+  let startWidth2: number
+
+  function startDragging(e: MouseEvent) {
+    startX = e.clientX
+    startWidth = parseInt(document.defaultView.getComputedStyle(pane1).width, 10)
+    startWidth2 = parseInt(document.defaultView.getComputedStyle(pane2).width, 10)
+    document.documentElement.addEventListener('mousemove', doDrag)
+    document.documentElement.addEventListener('mouseup', stopDragging)
+  }
+
+  const MIN_WIDTH = 372
+
+  function doDrag(e: MouseEvent) {
+    const fullWidth = parseInt(document.defaultView.getComputedStyle(container).width, 10)
+    const deltaX = e.clientX - startX
+    let newWidth1 = startWidth + deltaX
+    let newWidth2 = startWidth2 - deltaX
+
+    if (newWidth1 < MIN_WIDTH) {
+      newWidth1 = MIN_WIDTH
+      newWidth2 = startWidth + startWidth2 - newWidth1
+    } else if (newWidth2 < MIN_WIDTH) {
+      newWidth2 = MIN_WIDTH
+      newWidth1 = startWidth + startWidth2 - newWidth2
+    }
+
+    pane1.style.width = `${newWidth1}px`
+    pane2.style.width = `${newWidth2}px`
+    const actualWidth1 = parseInt(document.defaultView.getComputedStyle(pane1).width, 10)
+    pane2.style.width = `calc(${fullWidth}px - ${actualWidth1}px)`
+  }
+
+  function stopDragging() {
+    document.documentElement.removeEventListener('mousemove', doDrag)
+    document.documentElement.removeEventListener('mouseup', stopDragging)
+  }
+
+  function onWindowResize() {
+    const pane1Width = parseInt(pane1.style.width.replace('px', ''), 10)
+    const pane2Width = parseInt(pane2.style.width.replace('px', ''), 10)
+    const fullWidth = parseInt(document.defaultView.getComputedStyle(container).width, 10)
+    const multiplier = fullWidth / (pane1Width + pane2Width)
+    const newPane1Width = pane1Width * multiplier
+    pane1.style.width = (newPane1Width > MIN_WIDTH ? newPane1Width : MIN_WIDTH) + 'px'
+    const newPane2Width = fullWidth - (+document.defaultView.getComputedStyle(pane1).width.replace('px', ''))
+    pane2.style.width = (newPane2Width) + 'px'
+  }
+
+  window.addEventListener('resize', onWindowResize)
+
+  divider.addEventListener('mousedown', startDragging)
+</script>
